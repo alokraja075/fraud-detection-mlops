@@ -1,0 +1,63 @@
+name: 🤖 Fraud Detection ML Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: your-bucket-name    # ⚠️ Change this
+
+jobs:
+  ml-pipeline:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: ✅ Checkout code
+        uses: actions/checkout@v3
+
+      - name: 🐍 Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: 📦 Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: 📥 Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📂 Pull data from S3 via DVC
+        run: dvc pull
+
+      - name: ⚙️ Run full pipeline (preprocess → train → evaluate)
+        run: dvc repro
+
+      - name: 📤 Push updated model to S3 via DVC
+        run: dvc push
+
+      - name: 📊 Upload evaluation reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-reports
+          path: reports/
+
+      - name: 💾 Commit DVC lock file
+        run: |
+          git config user.email "ci@github.com"
+          git config user.name "GitHub Actions"
+          git add dvc.lock reports/metrics.json
+          git diff --staged --quiet || git commit -m "🤖 Update DVC lock + metrics [skip ci]"
+          git push
