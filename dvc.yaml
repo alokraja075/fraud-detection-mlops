@@ -1,0 +1,33 @@
+# dvc.yaml
+# Defines the full ML pipeline stages
+# Run with: dvc repro
+
+stages:
+  preprocess:
+    cmd: python src/preprocess.py
+    deps:
+      - src/preprocess.py
+      - data/raw
+    outs:
+      - data/processed
+
+  train:
+    cmd: python src/train.py
+    deps:
+      - src/train.py
+      - data/processed
+    outs:
+      - models/fraud_model.pkl
+    metrics:
+      - reports/metrics.json:
+          cache: false
+
+  evaluate:
+    cmd: python src/evaluate.py
+    deps:
+      - src/evaluate.py
+      - models/fraud_model.pkl
+      - data/processed
+    outs:
+      - reports/roc_curve.png:
+          cache: false
