@@ -56,8 +56,8 @@ jobs:
 
       - name: 💾 Commit DVC lock file
         run: |
-          git config user.email "ci@github.com"
+          git config user.email "alokraja075@gmail.com"
           git config user.name "GitHub Actions"
           git add dvc.lock reports/metrics.json
-          git diff --staged --quiet || git commit -m "🤖 Update DVC lock + metrics [skip ci]"
+          git diff --staged --quiet || git commit -m " Update DVC lock + metrics [skip ci]"
           git push

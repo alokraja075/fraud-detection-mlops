@@ -32,4 +32,4 @@ dvc remote modify awsremote region us-east-1   # Change to your region
 git add .dvc/config
 git commit -m "Configure DVC S3 remote"
 
-echo "✅ Setup complete! Next: run python src/preprocess.py"
+echo " Setup complete! Next: run python src/preprocess.py"
