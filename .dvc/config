@@ -1,0 +1,6 @@
+[core]
+    no_scm = True
+    remote = awsremote
+['remote "awsremote"']
+    url = s3://fraud-detection-dvc
+    region = us-east-1
