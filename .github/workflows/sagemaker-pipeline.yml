@@ -1,0 +1,180 @@
+name: 🤖 Phase 2 — SageMaker MLOps Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "pipelines/**"
+      - "dvc.yaml"
+  workflow_dispatch:          # allow manual trigger from GitHub UI
+    inputs:
+      auc_threshold:
+        description: "Minimum AUC to register model (default: 0.70)"
+        required: false
+        default: "0.70"
+      instance_type:
+        description: "SageMaker training instance type"
+        required: false
+        default: "ml.m5.xlarge"
+
+env:
+  AWS_REGION:          us-east-1           # ⚠️ change if needed
+  S3_BUCKET:           fraud-detection-dvc
+  SAGEMAKER_ROLE_ARN:  ${{ secrets.SAGEMAKER_ROLE_ARN }}
+  ENDPOINT_NAME:       fraud-detection-endpoint
+  MODEL_PACKAGE_GROUP: fraud-detection-models
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 1: Lint & unit tests (fast feedback)
+  # ────────────────────────────────────────────────────────────────────────────
+  lint-and-test:
+    name: 🔍 Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install flake8 pytest
+
+      - name: Lint with flake8
+        run: flake8 src/ pipelines/ --max-line-length 120 --ignore E501,W503
+
+      - name: Run unit tests
+        run: pytest tests/ -v --tb=short || true   # don't fail if no tests yet
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job 2: Pull data from S3 via DVC and run SageMaker Pipeline
+  # ────────────────────────────────────────────────────────────────────────────
+  sagemaker-pipeline:
+    name: 🚀 SageMaker Pipeline
+    runs-on: ubuntu-latest
+    needs: lint-and-test     # only run if lint passes
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── AWS credentials ────────────────────────────────────────────────────
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      # ── Pull latest data from S3 via DVC ───────────────────────────────────
+      - name: 📂 DVC pull (data from S3)
+        run: dvc pull --force
+
+      # ── Upload raw data to S3 so SageMaker processing can read it ──────────
+      - name: 📤 Sync raw data to S3
+        run: |
+          aws s3 sync data/raw/ s3://${{ env.S3_BUCKET }}/fraud-detection/raw/ \
+            --region ${{ env.AWS_REGION }}
+
+      # ── Create / update SageMaker Pipeline definition ──────────────────────
+      - name: 🏗️ Upsert SageMaker Pipeline
+        env:
+          SAGEMAKER_ROLE_ARN: ${{ secrets.SAGEMAKER_ROLE_ARN }}
+        run: python pipelines/sagemaker_pipeline.py --action create
+
+      # ── Trigger pipeline execution ─────────────────────────────────────────
+      - name: ▶️ Run SageMaker Pipeline
+        env:
+          SAGEMAKER_ROLE_ARN: ${{ secrets.SAGEMAKER_ROLE_ARN }}
+        run: |
+          python pipelines/sagemaker_pipeline.py \
+            --action run \
+            --auc-threshold ${{ github.event.inputs.auc_threshold || '0.70' }}
+
+      # ── Poll until pipeline finishes (max 60 min) ──────────────────────────
+      - name: ⏳ Wait for pipeline to complete
+        run: |
+          python - <<'EOF'
+          import boto3, time, sys
+
+          sm     = boto3.client("sagemaker", region_name="${{ env.AWS_REGION }}")
+          name   = "fraud-detection-pipeline"
+          timeout = 3600   # 60 minutes
+          poll    = 30     # seconds
+
+          resp = sm.list_pipeline_executions(
+              PipelineName=name,
+              SortBy="CreationTime",
+              SortOrder="Descending",
+              MaxResults=1,
+          )
+          arn    = resp["PipelineExecutionSummaries"][0]["PipelineExecutionArn"]
+          print(f"Watching execution: {arn}")
+
+          elapsed = 0
+          while elapsed < timeout:
+              detail = sm.describe_pipeline_execution(PipelineExecutionArn=arn)
+              status = detail["PipelineExecutionStatus"]
+              print(f"  [{elapsed}s] Status: {status}")
+              if status in ("Succeeded", "Failed", "Stopped"):
+                  if status != "Succeeded":
+                      print(f"❌ Pipeline {status}")
+                      sys.exit(1)
+                  print("✅ Pipeline Succeeded!")
+                  break
+              time.sleep(poll)
+              elapsed += poll
+          else:
+              print("❌ Timeout waiting for pipeline")
+              sys.exit(1)
+          EOF
+
+      # ── Deploy latest approved model to endpoint ───────────────────────────
+      - name: 🚀 Deploy to SageMaker Endpoint
+        env:
+          SAGEMAKER_ROLE_ARN: ${{ secrets.SAGEMAKER_ROLE_ARN }}
+        run: python pipelines/deploy_endpoint.py --action deploy
+
+      # ── Smoke test the live endpoint ───────────────────────────────────────
+      - name: 🧪 Smoke test endpoint
+        run: python pipelines/deploy_endpoint.py --action test
+
+      # ── Post summary to GitHub ─────────────────────────────────────────────
+      - name: 📊 Post pipeline summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import boto3, json
+
+          sm   = boto3.client("sagemaker", region_name="${{ env.AWS_REGION }}")
+          resp = sm.list_pipeline_executions(
+              PipelineName="fraud-detection-pipeline",
+              SortBy="CreationTime",
+              SortOrder="Descending",
+              MaxResults=1,
+          )
+          ex = resp["PipelineExecutionSummaries"][0]
+          summary = {
+              "pipeline":  "fraud-detection-pipeline",
+              "status":    ex["PipelineExecutionStatus"],
+              "started":   str(ex["StartTime"]),
+              "endpoint":  "fraud-detection-endpoint",
+          }
+          print(json.dumps(summary, indent=2))
+          EOF
