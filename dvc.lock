@@ -1,0 +1,62 @@
+schema: '2.0'
+stages:
+  preprocess:
+    cmd: python src/preprocess.py
+    deps:
+    - path: data/raw
+      hash: md5
+      md5: 6ffbaaad7b4ac6e1afabed19a80b2560.dir
+      size: 0
+      nfiles: 1
+    - path: src/preprocess.py
+      hash: md5
+      md5: d533d1c9a148f9a396abe81b52890b2b
+      size: 6108
+    outs:
+    - path: data/processed
+      hash: md5
+      md5: 89d8a94edf50a237df9935ccb372b449.dir
+      size: 278420
+      nfiles: 4
+  train:
+    cmd: python src/train.py
+    deps:
+    - path: data/processed
+      hash: md5
+      md5: 89d8a94edf50a237df9935ccb372b449.dir
+      size: 278420
+      nfiles: 4
+    - path: src/train.py
+      hash: md5
+      md5: b935ab23af2bc359ec8594f001e50653
+      size: 4616
+    outs:
+    - path: models/fraud_model.pkl
+      hash: md5
+      md5: bedebd312b42ccd92991c77f0ef2e533
+      size: 1068738
+    - path: reports/metrics.json
+      hash: md5
+      md5: c6118e901284c7dc48722a79f05e8599
+      size: 78
+  evaluate:
+    cmd: python src/evaluate.py
+    deps:
+    - path: data/processed
+      hash: md5
+      md5: 89d8a94edf50a237df9935ccb372b449.dir
+      size: 278420
+      nfiles: 4
+    - path: models/fraud_model.pkl
+      hash: md5
+      md5: bedebd312b42ccd92991c77f0ef2e533
+      size: 1068738
+    - path: src/evaluate.py
+      hash: md5
+      md5: 868e6aed0e5a285ebf40809b151d75f7
+      size: 3033
+    outs:
+    - path: reports/roc_curve.png
+      hash: md5
+      md5: c84cdfee21b1e7fc2909f792570ae62b
+      size: 33634

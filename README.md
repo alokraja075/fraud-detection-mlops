@@ -29,6 +29,11 @@ fraud-detection-mlops/
 
 ## 🚀 Quick Start — Phase 2
 
+Tip: use this repo's virtualenv so scripts have `boto3`/`sagemaker` available:
+```bash
+./venv/bin/python src/invoke_endpoint.py --n 10
+```
+
 ### Step 1: AWS Setup (run once)
 ```bash
 pip install -r requirements.txt
@@ -115,6 +120,22 @@ REST API  →  {"prediction": 1, "label": "FRAUD", "fraud_probability": 0.94}
 - **Model Registry**: https://console.aws.amazon.com/sagemaker/model-registry
 - **Endpoints**: https://console.aws.amazon.com/sagemaker/endpoints
 - **S3 artifacts**: https://s3.console.aws.amazon.com/s3/buckets/your-bucket
+
+---
+
+## 🧪 Simple GUI to Test Fraud Scoring
+
+Upload a CSV and get fraud probability scores from the live SageMaker endpoint.
+
+Run:
+```bash
+./venv/bin/uvicorn src.gui:app --host 0.0.0.0 --port 8000
+```
+
+Open:
+`http://localhost:8000`
+
+Evidence screenshots are in `evidence/`.
 
 ---
 
