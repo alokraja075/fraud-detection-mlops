@@ -214,12 +214,17 @@ __pycache__/
 .env
 
 # DVC - don't commit actual data/models, only .dvc pointer files
+.dvc/cache/
+.dvc/tmp/
+.dvc/lock
 data/raw
 data/processed
 models/
 
 # MLflow
 mlruns/
+mlflow.db
+mlflow.db-journal
 
 # Reports
 reports/
