@@ -4,7 +4,7 @@ sagemaker_pipeline.py
 Defines the full SageMaker Pipeline:
 
   Step 1 → ProcessingJob   (data preprocessing via SKLearn Processor)
-  Step 2 → TrainingJob     (XGBoost on ml.m5.xlarge)
+  Step 2 → TrainingJob     (XGBoost on ml.m5.large)
   Step 3 → EvaluationJob   (compute AUC + metrics.json)
   Step 4 → ConditionStep   (only proceed if AUC >= 0.70)
   Step 5 → ModelRegister   (push to SageMaker Model Registry)
@@ -17,36 +17,29 @@ Run:
 """
 
 import argparse
-import json
 import logging
 import os
 import boto3
 import sagemaker
+from botocore.exceptions import NoCredentialsError
 from sagemaker.workflow.pipeline import Pipeline
-from sagemaker.workflow.steps import (
-    ProcessingStep,
-    TrainingStep,
-    TransformStep,
-)
+from sagemaker.workflow.steps import ProcessingStep
 from sagemaker.workflow.step_collections import RegisterModel
 from sagemaker.workflow.conditions import ConditionGreaterThanOrEqualTo
 from sagemaker.workflow.condition_step import ConditionStep
+from sagemaker.workflow.functions import Join
 from sagemaker.workflow.functions import JsonGet
 from sagemaker.workflow.parameters import (
-    ParameterInteger,
     ParameterFloat,
     ParameterString,
 )
 from sagemaker.workflow.properties import PropertyFile
 from sagemaker.sklearn.processing import SKLearnProcessor
-from sagemaker.processing import ProcessingInput, ProcessingOutput
-from sagemaker.estimator import Estimator
-from sagemaker.inputs import TrainingInput
+from sagemaker.processing import ProcessingInput, ProcessingOutput, ScriptProcessor
 from sagemaker.model_metrics import (
     ModelMetrics,
     MetricsSource,
 )
-from sagemaker.workflow.execution_variables import ExecutionVariables
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s  %(levelname)s  %(message)s")
@@ -55,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration — edit these ────────────────────────────────────────────────
 CONFIG = {
-    # ⚠️  Replace with your values
+    
     "region":           os.environ.get("AWS_REGION", "us-east-1"),
     "bucket":           os.environ.get("S3_BUCKET",  "fraud-detection-dvc"),
     "role_arn":         os.environ.get("SAGEMAKER_ROLE_ARN", "arn:aws:iam::779466390141:role/FraudDetectionSageMakerRole"),
@@ -63,17 +56,74 @@ CONFIG = {
     "model_package_group": "fraud-detection-models",
     "endpoint_name":    "fraud-detection-endpoint",
 
-    # Instance types  (change to ml.t3.medium for cheaper dev)
-    "processing_instance": "ml.m5.xlarge",
-    "training_instance":   "ml.m5.xlarge",
+    "processing_instance": "ml.t3.medium",
 
-    # Container image — AWS managed XGBoost
     "xgboost_image":    sagemaker.image_uris.retrieve(
                             "xgboost", os.environ.get("AWS_REGION", "us-east-1"),
                             version="1.7-1"
                         ) if False else None,   # resolved lazily below
 }
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _list_nonzero_processing_instances(region: str) -> list[str]:
+    """Return instance types with non-zero *processing job usage* quota."""
+    sq = boto3.client("service-quotas", region_name=region)
+    token = None
+    instances: list[str] = []
+    while True:
+        kwargs = {"ServiceCode": "sagemaker", "MaxResults": 100}
+        if token:
+            kwargs["NextToken"] = token
+        resp = sq.list_service_quotas(**kwargs)
+        for q in resp.get("Quotas", []):
+            name = (q.get("QuotaName") or "").lower()
+            if "for processing job usage" in name and float(q.get("Value", 0.0)) > 0:
+                # QuotaName format: "ml.t3.medium for processing job usage"
+                instances.append((q.get("QuotaName") or "").split(" ")[0])
+        token = resp.get("NextToken")
+        if not token:
+            break
+    # Stable order: smaller first when possible.
+    preferred = ["ml.t3.medium", "ml.t3.large", "ml.t3.xlarge"]
+    ordered = [i for i in preferred if i in instances] + [i for i in instances if i not in preferred]
+    return ordered
+
+
+def _pick_processing_instance(region: str, desired: str) -> str:
+    available = _list_nonzero_processing_instances(region)
+    if desired in available:
+        return desired
+    if available:
+        logger.warning(
+            "Processing instance '%s' has no quota; falling back to '%s' (available=%s)",
+            desired,
+            available[0],
+            available,
+        )
+        return available[0]
+    logger.warning(
+        "No non-zero processing instance quotas detected; keeping desired '%s'", desired
+    )
+    return desired
+
+
+def _ensure_raw_prefix_has_object(region: str, bucket: str, prefix: str) -> None:
+    """SageMaker Processing fails to download when an input S3 prefix is empty."""
+    try:
+        s3 = boto3.client("s3", region_name=region)
+        raw_prefix = f"{prefix}/raw/"
+        resp = s3.list_objects_v2(Bucket=bucket, Prefix=raw_prefix, MaxKeys=1)
+        if resp.get("KeyCount", 0) > 0:
+            return
+        key = f"{raw_prefix}.keep"
+        logger.warning("Seeding empty S3 prefix s3://%s/%s", bucket, raw_prefix)
+        s3.put_object(Bucket=bucket, Key=key, Body=b"placeholder")
+    except NoCredentialsError:
+        logger.warning(
+            "AWS credentials not configured; skipping S3 raw prefix seeding. "
+            "Pipeline create/run will also fail until credentials are set."
+        )
 
 
 def get_session():
@@ -87,18 +137,19 @@ def build_pipeline() -> Pipeline:
     bucket  = CONFIG["bucket"]
     prefix  = "fraud-detection"
 
-    # ── Pipeline parameters (can be overridden per-run) ──────────────────────
-    p_n_estimators  = ParameterInteger(name="NEstimators",    default_value=300)
-    p_max_depth     = ParameterInteger(name="MaxDepth",       default_value=6)
-    p_learning_rate = ParameterFloat(  name="LearningRate",   default_value=0.05)
-    p_auc_threshold = ParameterFloat(  name="AucThreshold",   default_value=0.70)
-    p_instance_type = ParameterString( name="TrainingInstance",
-                                       default_value=CONFIG["training_instance"])
+    processing_instance = _pick_processing_instance(CONFIG["region"], CONFIG["processing_instance"])
 
+    # ── Pipeline parameters (can be overridden per-run) ──────────────────────
+    # NOTE: ProcessingStep `job_arguments` are strings, so these are strings.
+    # The training script parses them into numeric types via argparse.
+    p_n_estimators  = ParameterString(name="NEstimators",    default_value="300")
+    p_max_depth     = ParameterString(name="MaxDepth",       default_value="6")
+    p_learning_rate = ParameterString(name="LearningRate",   default_value="0.05")
+    p_auc_threshold = ParameterFloat(  name="AucThreshold",   default_value=0.70)
     # ── Step 1: Processing (preprocess raw CSVs) ─────────────────────────────
     sklearn_processor = SKLearnProcessor(
         framework_version="1.2-1",
-        instance_type=CONFIG["processing_instance"],
+        instance_type=processing_instance,
         instance_count=1,
         role=role,
         sagemaker_session=session,
@@ -125,59 +176,77 @@ def build_pipeline() -> Pipeline:
                 destination=f"s3://{bucket}/{prefix}/processed/test",
             ),
         ],
+        job_arguments=[
+            "--input-dir", "/opt/ml/processing/input",
+            "--train-output-dir", "/opt/ml/processing/output/train",
+            "--test-output-dir", "/opt/ml/processing/output/test",
+        ],
         code="src/preprocess.py",
     )
 
-    # ── Step 2: Training Job ──────────────────────────────────────────────────
-    xgb_image = sagemaker.image_uris.retrieve(
-        "xgboost", CONFIG["region"], version="1.7-1"
-    )
+    # ── Step 2: Training (as ProcessingJob to avoid TrainingJob quotas) ───────
+    xgb_image = sagemaker.image_uris.retrieve("xgboost", CONFIG["region"], version="1.7-1")
 
-    xgb_estimator = Estimator(
+    train_processor = ScriptProcessor(
         image_uri=xgb_image,
-        instance_type=p_instance_type,
+        command=["python3"],
+        instance_type=processing_instance,
         instance_count=1,
-        output_path=f"s3://{bucket}/{prefix}/model-artifacts",
         role=role,
         sagemaker_session=session,
-        hyperparameters={
-            "n_estimators":     p_n_estimators,
-            "max_depth":        p_max_depth,
-            "learning_rate":    p_learning_rate,
-            "scale_pos_weight": 10,
-            "eval_metric":      "auc",
-        },
-        entry_point="src/train_sagemaker.py",
-        metric_definitions=[
-            {"Name": "validation:auc", "Regex": r"AUC Score: ([0-9\.]+)"},
-            {"Name": "train:f1",       "Regex": r"f1: ([0-9\.]+)"},
-        ],
     )
 
-    training_step = TrainingStep(
+    train_step = ProcessingStep(
         name="FraudModelTraining",
-        estimator=xgb_estimator,
-        inputs={
-            "train": TrainingInput(
-                s3_data=processing_step.properties.ProcessingOutputConfig
-                        .Outputs["train"].S3Output.S3Uri,
-                content_type="text/csv",
+        processor=train_processor,
+        inputs=[
+            ProcessingInput(
+                source=processing_step.properties.ProcessingOutputConfig.Outputs["train"].S3Output.S3Uri,
+                destination="/opt/ml/processing/train",
             ),
-            "test": TrainingInput(
-                s3_data=processing_step.properties.ProcessingOutputConfig
-                        .Outputs["test"].S3Output.S3Uri,
-                content_type="text/csv",
+            ProcessingInput(
+                source=processing_step.properties.ProcessingOutputConfig.Outputs["test"].S3Output.S3Uri,
+                destination="/opt/ml/processing/test",
             ),
-        },
+        ],
+        outputs=[
+            ProcessingOutput(
+                output_name="model",
+                source="/opt/ml/processing/model",
+                destination=f"s3://{bucket}/{prefix}/model-artifacts",
+            ),
+        ],
+        job_arguments=[
+            "--train-dir",
+            "/opt/ml/processing/train",
+            "--test-dir",
+            "/opt/ml/processing/test",
+            "--model-dir",
+            "/opt/ml/processing/model",
+            "--max-depth",
+            p_max_depth,
+            "--eta",
+            p_learning_rate,
+            "--num-round",
+            p_n_estimators,
+        ],
+        code="src/train_processing.py",
     )
 
     # ── Step 3: Evaluation Job ────────────────────────────────────────────────
-    eval_processor = SKLearnProcessor(
-        framework_version="1.2-1",
-        instance_type=CONFIG["processing_instance"],
+    # Use the XGBoost image so we can reliably load `xgboost-model`.
+    eval_processor = ScriptProcessor(
+        image_uri=xgb_image,
+        command=["python3"],
+        instance_type=processing_instance,
         instance_count=1,
         role=role,
         sagemaker_session=session,
+        env={
+            "MODEL_DIR": "/opt/ml/processing/model",
+            "TEST_DATA_DIR": "/opt/ml/processing/test",
+            "REPORT_DIR": "/opt/ml/processing/evaluation",
+        },
     )
 
     evaluation_report = PropertyFile(
@@ -191,7 +260,7 @@ def build_pipeline() -> Pipeline:
         processor=eval_processor,
         inputs=[
             ProcessingInput(
-                source=training_step.properties.ModelArtifacts.S3ModelArtifacts,
+                source=train_step.properties.ProcessingOutputConfig.Outputs["model"].S3Output.S3Uri,
                 destination="/opt/ml/processing/model",
             ),
             ProcessingInput(
@@ -207,7 +276,7 @@ def build_pipeline() -> Pipeline:
                 destination=f"s3://{bucket}/{prefix}/evaluation",
             ),
         ],
-        code="src/evaluate.py",
+        code="src/evaluate_processing.py",
         property_files=[evaluation_report],
     )
 
@@ -229,13 +298,27 @@ def build_pipeline() -> Pipeline:
         )
     )
 
+    model_data = Join(
+        on="/",
+        values=[
+            train_step.properties.ProcessingOutputConfig.Outputs["model"].S3Output.S3Uri,
+            "model.tar.gz",
+        ],
+    )
+
+    xgb_model = sagemaker.model.Model(
+        image_uri=xgb_image,
+        model_data=model_data,
+        role=role,
+        sagemaker_session=session,
+    )
+
     register_step = RegisterModel(
         name="RegisterFraudModel",
-        estimator=xgb_estimator,
-        model_data=training_step.properties.ModelArtifacts.S3ModelArtifacts,
+        model=xgb_model,
         content_types=["application/json", "text/csv"],
         response_types=["application/json"],
-        inference_instances=["ml.m5.large", "ml.m5.xlarge"],
+        inference_instances=["ml.m5.large", "ml.m5.xlarge", "ml.c5.large"],
         transform_instances=["ml.m5.large"],
         model_package_group_name=CONFIG["model_package_group"],
         approval_status="Approved",   # auto-approve; change to "PendingManualApproval" for prod
@@ -258,11 +341,10 @@ def build_pipeline() -> Pipeline:
             p_max_depth,
             p_learning_rate,
             p_auc_threshold,
-            p_instance_type,
         ],
         steps=[
             processing_step,
-            training_step,
+            train_step,
             evaluation_step,
             condition_step,
         ],
@@ -287,18 +369,32 @@ def main():
     )
     args = parser.parse_args()
 
+    # Ensure the input prefix exists so ProcessingInput download doesn't fail.
+    if args.action in {"create", "run"}:
+        _ensure_raw_prefix_has_object(CONFIG["region"], CONFIG["bucket"], "fraud-detection")
+
     pipeline = build_pipeline()
 
     if args.action == "create":
         logger.info("Upserting pipeline definition to SageMaker...")
-        pipeline.upsert(role_arn=CONFIG["role_arn"])
+        try:
+            pipeline.upsert(role_arn=CONFIG["role_arn"])
+        except NoCredentialsError as e:
+            raise SystemExit(
+                "Missing AWS credentials. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY "
+                "(and AWS_SESSION_TOKEN if applicable) plus AWS_REGION, then retry."
+            ) from e
         logger.info(f"✅ Pipeline '{CONFIG['pipeline_name']}' created/updated.")
 
     elif args.action == "run":
         logger.info("Starting pipeline execution...")
-        execution = pipeline.start(
-            parameters={"AucThreshold": args.auc_threshold}
-        )
+        try:
+            execution = pipeline.start(parameters={"AucThreshold": args.auc_threshold})
+        except NoCredentialsError as e:
+            raise SystemExit(
+                "Missing AWS credentials. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY "
+                "(and AWS_SESSION_TOKEN if applicable) plus AWS_REGION, then retry."
+            ) from e
         logger.info(f"✅ Execution started: {execution.arn}")
         logger.info("Monitor at: https://console.aws.amazon.com/sagemaker/pipelines")
 
