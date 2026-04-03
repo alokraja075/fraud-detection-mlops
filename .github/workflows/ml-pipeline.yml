@@ -6,34 +6,42 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ml-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 env:
   AWS_REGION: us-east-1
-  S3_BUCKET: your-bucket-name    # ⚠️ Change this
+  S3_BUCKET: fraud-detection-dvc
 
 jobs:
   ml-pipeline:
+    # AWS/DVC steps require secrets; GitHub does not provide them to workflows from forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     
     steps:
       - name: ✅ Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python 3.10
-        uses: actions/setup-python@v4
+      - name: 🐍 Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-
-      - name: 📦 Cache pip dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: 📥 Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -49,15 +57,18 @@ jobs:
         run: dvc push
 
       - name: 📊 Upload evaluation reports
-        uses: actions/upload-artifact@v3
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: model-reports
           path: reports/
 
-      - name: 💾 Commit DVC lock file
+      - name: ✅ Summary
+        if: always()
         run: |
-          git config user.email "alokraja075@gmail.com"
-          git config user.name "GitHub Actions"
-          git add dvc.lock reports/metrics.json
-          git diff --staged --quiet || git commit -m " Update DVC lock + metrics [skip ci]"
-          git push
+          {
+            echo "## DVC pipeline run";
+            echo "- Branch: ${{ github.ref_name }}";
+            echo "- Region: $AWS_REGION";
+            echo "- Steps: dvc pull → dvc repro → dvc push";
+          } >> "$GITHUB_STEP_SUMMARY"
