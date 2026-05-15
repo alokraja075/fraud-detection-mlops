@@ -56,8 +56,34 @@ def get_latest_approved_model_arn() -> str:
     return arn
 
 
+def cleanup_existing_endpoint():
+    """Delete existing endpoint and endpoint-config if they exist."""
+    sm = boto3.client("sagemaker", region_name=REGION)
+
+    # Try to delete the endpoint
+    try:
+        sm.delete_endpoint(EndpointName=ENDPOINT_NAME)
+        logger.info(f"Deleted existing endpoint '{ENDPOINT_NAME}'")
+    except sm.exceptions.ClientError as e:
+        if "Could not find endpoint" in str(e):
+            logger.info(f"Endpoint '{ENDPOINT_NAME}' does not exist; continuing")
+        else:
+            logger.warning(f"Error deleting endpoint: {e}")
+
+    # Try to delete the endpoint-config
+    try:
+        sm.delete_endpoint_config(EndpointConfigName=ENDPOINT_NAME)
+        logger.info(f"Deleted existing endpoint-config '{ENDPOINT_NAME}'")
+    except sm.exceptions.ClientError as e:
+        if "Could not find endpoint config" in str(e):
+            logger.info(f"Endpoint-config '{ENDPOINT_NAME}' does not exist; continuing")
+        else:
+            logger.warning(f"Error deleting endpoint-config: {e}")
+
+
 def deploy_endpoint(model_arn: str):
     """Create or update the SageMaker real-time endpoint."""
+    cleanup_existing_endpoint()
     if not ROLE_ARN:
         raise RuntimeError("Missing SAGEMAKER_ROLE_ARN environment variable.")
 
