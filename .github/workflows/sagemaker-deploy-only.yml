@@ -1,0 +1,55 @@
+name: 🚀 SageMaker Deploy Only
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pipelines/deploy_endpoint.py"
+  workflow_dispatch:
+    inputs:
+      endpoint_instance:
+        description: "Endpoint instance type (optional)"
+        required: false
+        default: "ml.m5.large"
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: fraud-detection-dvc
+  SAGEMAKER_ROLE_ARN: ${{ secrets.SAGEMAKER_ROLE_ARN }}
+  ENDPOINT_NAME: fraud-detection-endpoint
+
+jobs:
+  deploy-only:
+    name: Deploy Model Package to SageMaker Endpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy latest approved model
+        env:
+          ENDPOINT_INSTANCE: ${{ github.event.inputs.endpoint_instance || env.ENDPOINT_INSTANCE || 'ml.m5.large' }}
+          SAGEMAKER_ROLE_ARN: ${{ secrets.SAGEMAKER_ROLE_ARN }}
+        run: |
+          python pipelines/deploy_endpoint.py --action deploy
+
+      - name: Smoke test endpoint
+        if: success()
+        run: |
+          python pipelines/deploy_endpoint.py --action test
