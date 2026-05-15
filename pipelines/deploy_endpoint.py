@@ -105,9 +105,32 @@ def deploy_endpoint(model_arn: str):
         )
 
     logger.info(f"Deploying to endpoint '{ENDPOINT_NAME}' on {INSTANCE_TYPE}...")
+    # Determine supported real-time instance types from the model package, and
+    # fall back to a supported instance if the configured one isn't compatible.
+    sm = boto3.client("sagemaker", region_name=REGION)
+    chosen_instance = INSTANCE_TYPE
+    try:
+        pkg_desc = sm.describe_model_package(ModelPackageNameOrArn=model_arn)
+        supported = pkg_desc.get("InferenceSpecification", {}).get(
+            "SupportedRealtimeInferenceInstanceTypes", []
+        )
+        if supported:
+            if INSTANCE_TYPE not in supported:
+                logger.warning(
+                    "Configured instance '%s' not in model package supported types %s;"
+                    " falling back to '%s'",
+                    INSTANCE_TYPE,
+                    supported,
+                    supported[0],
+                )
+                chosen_instance = supported[0]
+    except Exception as _:
+        # If we cannot inspect the package, continue with configured instance
+        logger.info("Could not determine supported instance types from model package; using configured instance.")
+
     predictor = model.deploy(
         initial_instance_count=1,
-        instance_type=INSTANCE_TYPE,
+        instance_type=chosen_instance,
         endpoint_name=ENDPOINT_NAME,
         serializer=JSONSerializer(),
         deserializer=JSONDeserializer(),
