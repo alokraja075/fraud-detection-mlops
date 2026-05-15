@@ -47,14 +47,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 📂 Pull data from S3 via DVC
-        run: dvc pull
-
-      - name: ⚙️ Run full pipeline (preprocess → train → evaluate)
-        run: dvc repro
-
-      - name: 📤 Push updated model to S3 via DVC
-        run: dvc push
+      - name: ⚙️ Run ML pipeline (preprocess → train → evaluate)
+        run: |
+          echo "Step 1: Preprocess data"
+          python src/preprocess.py
+          echo "Step 2: Train model"
+          python src/train.py
+          echo "Step 3: Evaluate model"
+          python src/evaluate.py
 
       - name: 📊 Upload evaluation reports
         if: always()
