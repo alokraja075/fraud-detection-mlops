@@ -20,7 +20,6 @@ import json
 import logging
 
 import pandas as pd
-import numpy as np
 import joblib
 import mlflow
 import mlflow.xgboost
@@ -41,9 +40,9 @@ logger = logging.getLogger(__name__)
 
 
 # ── SageMaker paths (fall back to local defaults) ────────────────────────────
-SM_MODEL_DIR       = os.environ.get("SM_MODEL_DIR",       "models")
-SM_CHANNEL_TRAIN   = os.environ.get("SM_CHANNEL_TRAIN",   "data/processed")
-SM_CHANNEL_TEST    = os.environ.get("SM_CHANNEL_TEST",    "data/processed")
+SM_MODEL_DIR = os.environ.get("SM_MODEL_DIR", "models")
+SM_CHANNEL_TRAIN = os.environ.get("SM_CHANNEL_TRAIN", "data/processed")
+SM_CHANNEL_TEST = os.environ.get("SM_CHANNEL_TEST", "data/processed")
 SM_OUTPUT_DATA_DIR = os.environ.get("SM_OUTPUT_DATA_DIR", "reports")
 
 
@@ -68,8 +67,8 @@ def load_data(train_dir: str, test_dir: str):
     y_train = pd.read_csv(os.path.join(train_dir, "y_train.csv")).squeeze()
 
     logger.info(f"Loading test data from {test_dir}")
-    X_test  = pd.read_csv(os.path.join(test_dir, "X_test.csv"))
-    y_test  = pd.read_csv(os.path.join(test_dir, "y_test.csv")).squeeze()
+    X_test = pd.read_csv(os.path.join(test_dir, "X_test.csv"))
+    y_test = pd.read_csv(os.path.join(test_dir, "y_test.csv")).squeeze()
 
     logger.info(f"Train shape: {X_train.shape}  |  Test shape: {X_test.shape}")
     logger.info(f"Fraud rate (train): {y_train.mean():.4%}")
@@ -91,16 +90,16 @@ def apply_smote(X, y):
 # ── Training ──────────────────────────────────────────────────────────────────
 def train(X_train, y_train, args):
     params = {
-        "n_estimators":     args.n_estimators,
-        "max_depth":        args.max_depth,
-        "learning_rate":    args.learning_rate,
-        "subsample":        args.subsample,
+        "n_estimators": args.n_estimators,
+        "max_depth": args.max_depth,
+        "learning_rate": args.learning_rate,
+        "subsample": args.subsample,
         "colsample_bytree": args.colsample_bytree,
         "scale_pos_weight": args.scale_pos_weight,
-        "eval_metric":      "auc",
+        "eval_metric": "auc",
         "use_label_encoder": False,
-        "random_state":     42,
-        "n_jobs":           -1,
+        "random_state": 42,
+        "n_jobs": -1,
     }
     logger.info(f"Training XGBoost with params: {params}")
     model = XGBClassifier(**params)
@@ -110,14 +109,14 @@ def train(X_train, y_train, args):
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 def evaluate(model, X_test, y_test):
-    y_pred      = model.predict(X_test)
+    y_pred = model.predict(X_test)
     y_pred_prob = model.predict_proba(X_test)[:, 1]
 
     metrics = {
-        "auc":       round(float(roc_auc_score(y_test, y_pred_prob)), 4),
-        "f1":        round(float(f1_score(y_test, y_pred)),           4),
-        "precision": round(float(precision_score(y_test, y_pred)),    4),
-        "recall":    round(float(recall_score(y_test, y_pred)),       4),
+        "auc": round(float(roc_auc_score(y_test, y_pred_prob)), 4),
+        "f1": round(float(f1_score(y_test, y_pred)), 4),
+        "precision": round(float(precision_score(y_test, y_pred)), 4),
+        "recall": round(float(recall_score(y_test, y_pred)), 4),
     }
 
     logger.info("\n" + classification_report(y_test, y_pred,
@@ -128,7 +127,7 @@ def evaluate(model, X_test, y_test):
 
 # ── Save artifacts ────────────────────────────────────────────────────────────
 def save_artifacts(model, metrics, model_dir, output_dir):
-    os.makedirs(model_dir,  exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
 
     # Model pickle (SageMaker expects model.tar.gz in SM_MODEL_DIR)

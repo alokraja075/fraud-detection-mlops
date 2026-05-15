@@ -26,12 +26,12 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-REGION         = os.environ.get("AWS_REGION",          "us-east-1")
-ROLE_ARN       = os.environ.get("SAGEMAKER_ROLE_ARN",  "arn:aws:iam::779466390141:role/FraudDetectionSageMakerRole")
-ENDPOINT_NAME  = os.environ.get("ENDPOINT_NAME",       "fraud-detection-endpoint")
-MODEL_PKG_GRP  = os.environ.get("MODEL_PACKAGE_GROUP", "fraud-detection-models")
-INSTANCE_TYPE  = os.environ.get("ENDPOINT_INSTANCE",   "ml.t2.medium")
-S3_BUCKET      = os.environ.get("S3_BUCKET",           "fraud-detection-dvc")
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+ROLE_ARN = os.environ.get("SAGEMAKER_ROLE_ARN", "arn:aws:iam::779466390141:role/FraudDetectionSageMakerRole")
+ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "fraud-detection-endpoint")
+MODEL_PKG_GRP = os.environ.get("MODEL_PACKAGE_GROUP", "fraud-detection-models")
+INSTANCE_TYPE = os.environ.get("ENDPOINT_INSTANCE", "ml.t2.medium")
+S3_BUCKET = os.environ.get("S3_BUCKET", "fraud-detection-dvc")
 # ─────────────────────────────────────────────────────────────────────────────
 
 

@@ -93,7 +93,7 @@ def _read_single_column_csv_from_s3(
     obj = s3_client.get_object(Bucket=bucket, Key=key)
     text = obj["Body"].read().decode("utf-8")
     reader = csv.reader(io.StringIO(text))
-    header = next(reader, None)
+    next(reader, None)  # skip header
     values: List[int] = []
     for _, row in zip(range(n), reader):
         if not row:

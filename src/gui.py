@@ -18,7 +18,6 @@ import csv
 import html
 import io
 import os
-import sys
 from typing import List, Tuple
 
 from fastapi import FastAPI, File, Form, UploadFile
@@ -134,7 +133,7 @@ async def score(
         for i in range(preview_n):
             table_rows.append(
                 "<tr>"
-                f"<td>{i+1}</td>"
+                f"<td>{i + 1}</td>"
                 f"<td>{scores[i]:.6f}</td>"
                 f"<td>{'FRAUD' if scores[i] >= threshold else 'OK'}</td>"
                 "</tr>"

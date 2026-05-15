@@ -48,20 +48,20 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration — edit these ────────────────────────────────────────────────
 CONFIG = {
-    
-    "region":           os.environ.get("AWS_REGION", "us-east-1"),
-    "bucket":           os.environ.get("S3_BUCKET",  "fraud-detection-dvc"),
-    "role_arn":         os.environ.get("SAGEMAKER_ROLE_ARN", "arn:aws:iam::779466390141:role/FraudDetectionSageMakerRole"),
-    "pipeline_name":    "fraud-detection-pipeline",
+
+    "region": os.environ.get("AWS_REGION", "us-east-1"),
+    "bucket": os.environ.get("S3_BUCKET", "fraud-detection-dvc"),
+    "role_arn": os.environ.get("SAGEMAKER_ROLE_ARN", "arn:aws:iam::779466390141:role/FraudDetectionSageMakerRole"),
+    "pipeline_name": "fraud-detection-pipeline",
     "model_package_group": "fraud-detection-models",
-    "endpoint_name":    "fraud-detection-endpoint",
+    "endpoint_name": "fraud-detection-endpoint",
 
     "processing_instance": "ml.t3.medium",
 
-    "xgboost_image":    sagemaker.image_uris.retrieve(
-                            "xgboost", os.environ.get("AWS_REGION", "us-east-1"),
-                            version="1.7-1"
-                        ) if False else None,   # resolved lazily below
+    "xgboost_image": sagemaker.image_uris.retrieve(
+        "xgboost", os.environ.get("AWS_REGION", "us-east-1"),
+        version="1.7-1"
+    ) if False else None,   # resolved lazily below
 }
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -133,19 +133,19 @@ def get_session():
 
 def build_pipeline() -> Pipeline:
     session = get_session()
-    role    = CONFIG["role_arn"]
-    bucket  = CONFIG["bucket"]
-    prefix  = "fraud-detection"
+    role = CONFIG["role_arn"]
+    bucket = CONFIG["bucket"]
+    prefix = "fraud-detection"
 
     processing_instance = _pick_processing_instance(CONFIG["region"], CONFIG["processing_instance"])
 
     # ── Pipeline parameters (can be overridden per-run) ──────────────────────
     # NOTE: ProcessingStep `job_arguments` are strings, so these are strings.
     # The training script parses them into numeric types via argparse.
-    p_n_estimators  = ParameterString(name="NEstimators",    default_value="300")
-    p_max_depth     = ParameterString(name="MaxDepth",       default_value="6")
-    p_learning_rate = ParameterString(name="LearningRate",   default_value="0.05")
-    p_auc_threshold = ParameterFloat(  name="AucThreshold",   default_value=0.70)
+    p_n_estimators = ParameterString(name="NEstimators", default_value="300")
+    p_max_depth = ParameterString(name="MaxDepth", default_value="6")
+    p_learning_rate = ParameterString(name="LearningRate", default_value="0.05")
+    p_auc_threshold = ParameterFloat(name="AucThreshold", default_value=0.70)
     # ── Step 1: Processing (preprocess raw CSVs) ─────────────────────────────
     sklearn_processor = SKLearnProcessor(
         framework_version="1.2-1",
@@ -265,7 +265,7 @@ def build_pipeline() -> Pipeline:
             ),
             ProcessingInput(
                 source=processing_step.properties.ProcessingOutputConfig
-                       .Outputs["test"].S3Output.S3Uri,
+                .Outputs["test"].S3Output.S3Uri,
                 destination="/opt/ml/processing/test",
             ),
         ],

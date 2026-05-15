@@ -16,13 +16,14 @@ import json
 import logging
 
 import joblib
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 # ── 1. Load model once when container starts ──────────────────────────────────
+
+
 def model_fn(model_dir: str):
     """
     Called once at container startup.
@@ -71,16 +72,16 @@ def predict_fn(input_data: pd.DataFrame, model):
     """
     logger.info(f"Running inference on {len(input_data)} row(s)")
 
-    predictions  = model.predict(input_data).tolist()
+    predictions = model.predict(input_data).tolist()
     probabilities = model.predict_proba(input_data)[:, 1].tolist()
 
     results = []
     for pred, prob in zip(predictions, probabilities):
         results.append({
-            "prediction":        int(pred),
-            "label":             "FRAUD" if pred == 1 else "LEGIT",
+            "prediction": int(pred),
+            "label": "FRAUD" if pred == 1 else "LEGIT",
             "fraud_probability": round(float(prob), 4),
-            "risk_level":        _risk_level(prob),
+            "risk_level": _risk_level(prob),
         })
 
     return results
