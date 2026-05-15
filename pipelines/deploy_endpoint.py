@@ -66,11 +66,43 @@ def deploy_endpoint(model_arn: str):
         boto_session=boto3.Session(region_name=REGION)
     )
 
-    model = ModelPackage(
-        model_package_arn=model_arn,   # loaded from Model Registry
-        role=ROLE_ARN,
-        sagemaker_session=session,
-    )
+    # Some SDK versions forward unknown kwargs to `Model` which can raise
+    # TypeError: Model.__init__() got an unexpected keyword argument 'model_package_arn'.
+    # Guard against that by trying `ModelPackage(...)` and falling back to
+    # creating a `Model` from the model package description if it fails.
+    try:
+        model = ModelPackage(
+            model_package_arn=model_arn,   # loaded from Model Registry
+            role=ROLE_ARN,
+            sagemaker_session=session,
+        )
+    except TypeError:
+        logger.warning(
+            "ModelPackage(...) failed; falling back to creating a Model from the model package"
+        )
+        sm = boto3.client("sagemaker", region_name=REGION)
+        pkg = sm.describe_model_package(ModelPackageNameOrArn=model_arn)
+        # Inference specification contains container image and model artifacts
+        inf = pkg.get("InferenceSpecification", {})
+        containers = inf.get("Containers", [])
+        if not containers:
+            raise RuntimeError("No container info found in model package.")
+        image_uri = containers[0].get("Image")
+        # Model data URI might be under ModelArtifacts or ModelPackageVersion
+        model_data_url = None
+        if "ModelArtifacts" in pkg:
+            model_data_url = pkg["ModelArtifacts"].get("S3ModelArtifacts")
+        elif containers[0].get("ModelDataUrl"):
+            model_data_url = containers[0].get("ModelDataUrl")
+        if not model_data_url:
+            # Some packages embed model data in inference spec properties
+            model_data_url = pkg.get("ModelPackageDescription")
+        model = sagemaker.model.Model(
+            image_uri=image_uri,
+            model_data=model_data_url,
+            role=ROLE_ARN,
+            sagemaker_session=session,
+        )
 
     logger.info(f"Deploying to endpoint '{ENDPOINT_NAME}' on {INSTANCE_TYPE}...")
     predictor = model.deploy(
