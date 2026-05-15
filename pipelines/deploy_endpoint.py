@@ -20,6 +20,7 @@ from sagemaker import ModelPackage
 from sagemaker.deserializers import JSONDeserializer, CSVDeserializer
 from sagemaker.predictor import Predictor
 from sagemaker.serializers import JSONSerializer, CSVSerializer
+import csv
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s  %(levelname)s  %(message)s")
@@ -194,23 +195,33 @@ def test_endpoint():
         deserializer=CSVDeserializer(),
     )
 
-    # Sample transaction features (CSV format: comma-separated values)
-    # Must match the training data feature count and order
-    sample_features = [
-        1234.56,   # TransactionAmt
-        0,         # ProductCD encoded
-        117.0,     # card1
-        0,         # card2
-        0,         # addr1
-        87,        # dist1
-        0.0,       # P_emaildomain encoded
-        0.0,       # R_emaildomain encoded
-        # ... add remaining features to match your training columns
-    ]
+    # Prefer to use a real sample from `data/processed/X_test.csv` so the
+    # feature count/order matches the training data. Fall back to a small
+    # synthetic sample if the file isn't available.
+    sample_row = None
+    csv_path = os.path.join(os.getcwd(), "data", "processed", "X_test.csv")
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, newline='') as fh:
+                reader = csv.reader(fh)
+                _ = next(reader, None)
+                row = next(reader, None)
+                if row:
+                    sample_row = row
+                    logger.info(f"Using sample row from {csv_path} (columns: {len(row)})")
+        except Exception as ex:
+            logger.warning(f"Could not read sample CSV: {ex}")
+
+    if sample_row is None:
+        # Fallback synthetic sample (may be wrong shape for your model)
+        sample_row = [
+            1234.56, 0, 117.0, 0, 0, 87, 0.0, 0.0
+        ]
+        logger.info("Using fallback synthetic sample for smoke test")
 
     logger.info("Sending test transaction to endpoint...")
     try:
-        result = predictor.predict(sample_features)
+        result = predictor.predict(sample_row)
         logger.info(f"✅ Prediction result: {result}")
         return result
     except Exception as e:
