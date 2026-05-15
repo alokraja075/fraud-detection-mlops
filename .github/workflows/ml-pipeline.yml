@@ -63,12 +63,12 @@ jobs:
           name: model-reports
           path: reports/
 
-      - name:  Summary
+      - name: Summary
         if: always()
         run: |
           {
-            echo "## DVC pipeline run";
+            echo "## ML Pipeline Run";
             echo "- Branch: ${{ github.ref_name }}";
             echo "- Region: $AWS_REGION";
-            echo "- Steps: dvc pull → dvc repro → dvc push";
+            echo "- Steps: preprocess → train → evaluate";
           } >> "$GITHUB_STEP_SUMMARY"

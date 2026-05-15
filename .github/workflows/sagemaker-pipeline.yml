@@ -96,10 +96,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      # ── Pull latest data from S3 via DVC ───────────────────────────────────
-      - name: 📂 DVC pull (data from S3)
-        run: dvc pull --force
-
       # ── Upload raw data to S3 so SageMaker processing can read it ──────────
       - name: 📤 Sync raw data to S3
         run: |
