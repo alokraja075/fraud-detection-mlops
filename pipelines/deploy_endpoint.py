@@ -124,7 +124,7 @@ def deploy_endpoint(model_arn: str):
                     supported[0],
                 )
                 chosen_instance = supported[0]
-    except Exception as _:
+    except Exception:
         # If we cannot inspect the package, continue with configured instance
         logger.info("Could not determine supported instance types from model package; using configured instance.")
 
