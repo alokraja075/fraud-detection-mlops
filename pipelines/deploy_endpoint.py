@@ -14,12 +14,13 @@ import argparse
 import json
 import logging
 import os
+
 import boto3
 import sagemaker
-from sagemaker import Model
+from sagemaker import ModelPackage
 from sagemaker.deserializers import JSONDeserializer
-from sagemaker.serializers import JSONSerializer
 from sagemaker.predictor import Predictor
+from sagemaker.serializers import JSONSerializer
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s  %(levelname)s  %(message)s")
@@ -58,17 +59,17 @@ def get_latest_approved_model_arn() -> str:
 
 def deploy_endpoint(model_arn: str):
     """Create or update the SageMaker real-time endpoint."""
+    if not ROLE_ARN:
+        raise RuntimeError("Missing SAGEMAKER_ROLE_ARN environment variable.")
+
     session = sagemaker.Session(
         boto_session=boto3.Session(region_name=REGION)
     )
 
-    model = Model(
-        model_data=None,               # loaded from registry ARN
-        image_uri=None,
-        model_package_arn=model_arn,   # ← from Model Registry
+    model = ModelPackage(
+        model_package_arn=model_arn,   # loaded from Model Registry
         role=ROLE_ARN,
         sagemaker_session=session,
-        entry_point="src/inference.py",
     )
 
     logger.info(f"Deploying to endpoint '{ENDPOINT_NAME}' on {INSTANCE_TYPE}...")
