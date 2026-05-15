@@ -31,7 +31,7 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 ROLE_ARN = os.environ.get("SAGEMAKER_ROLE_ARN")  # Must be set via env var
 ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "fraud-detection-endpoint")
 MODEL_PKG_GRP = os.environ.get("MODEL_PACKAGE_GROUP", "fraud-detection-models")
-INSTANCE_TYPE = os.environ.get("ENDPOINT_INSTANCE", "ml.t2.medium")
+INSTANCE_TYPE = os.environ.get("ENDPOINT_INSTANCE", "ml.m5.large")
 S3_BUCKET = os.environ.get("S3_BUCKET", "fraud-detection-dvc")
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -127,6 +127,15 @@ def deploy_endpoint(model_arn: str):
     except Exception:
         # If we cannot inspect the package, continue with configured instance
         logger.info("Could not determine supported instance types from model package; using configured instance.")
+
+    # If chosen instance is still not set or the metadata was empty, try fallback instances
+    if chosen_instance == INSTANCE_TYPE and INSTANCE_TYPE not in ["ml.m5.large", "ml.m5.xlarge", "ml.c5.large"]:
+        fallback_instances = ["ml.m5.large", "ml.m5.xlarge", "ml.c5.large"]
+        logger.info(
+            "Configured instance '%s' may not be widely supported; trying fallback instances: %s",
+            INSTANCE_TYPE, fallback_instances
+        )
+        chosen_instance = fallback_instances[0]
 
     predictor = model.deploy(
         initial_instance_count=1,
