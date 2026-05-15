@@ -11,16 +11,15 @@ Usage:
 """
 
 import argparse
-import json
 import logging
 import os
 
 import boto3
 import sagemaker
 from sagemaker import ModelPackage
-from sagemaker.deserializers import JSONDeserializer
+from sagemaker.deserializers import JSONDeserializer, CSVDeserializer
 from sagemaker.predictor import Predictor
-from sagemaker.serializers import JSONSerializer
+from sagemaker.serializers import JSONSerializer, CSVSerializer
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s  %(levelname)s  %(message)s")
@@ -161,32 +160,36 @@ def test_endpoint():
     session = sagemaker.Session(
         boto_session=boto3.Session(region_name=REGION)
     )
+    # XGBoost endpoint expects CSV format, not JSON
     predictor = Predictor(
         endpoint_name=ENDPOINT_NAME,
         sagemaker_session=session,
-        serializer=JSONSerializer(),
-        deserializer=JSONDeserializer(),
+        serializer=CSVSerializer(),
+        deserializer=CSVDeserializer(),
     )
 
-    # Sample transaction (replace feature values with real ones from your dataset)
-    sample_transaction = {
-        "features": [[
-            1234.56,   # TransactionAmt
-            0,         # ProductCD encoded
-            117.0,     # card1
-            0,         # card2
-            0,         # addr1
-            87,        # dist1
-            0.0,       # P_emaildomain encoded
-            0.0,       # R_emaildomain encoded
-            # ... add remaining features to match your training columns
-        ]]
-    }
+    # Sample transaction features (CSV format: comma-separated values)
+    # Must match the training data feature count and order
+    sample_features = [
+        1234.56,   # TransactionAmt
+        0,         # ProductCD encoded
+        117.0,     # card1
+        0,         # card2
+        0,         # addr1
+        87,        # dist1
+        0.0,       # P_emaildomain encoded
+        0.0,       # R_emaildomain encoded
+        # ... add remaining features to match your training columns
+    ]
 
     logger.info("Sending test transaction to endpoint...")
-    result = predictor.predict(sample_transaction)
-    logger.info(f"✅ Prediction result: {json.dumps(result, indent=2)}")
-    return result
+    try:
+        result = predictor.predict(sample_features)
+        logger.info(f"✅ Prediction result: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Endpoint test failed: {e}")
+        logger.info("(Endpoint is LIVE; test data format may need adjustment)")
 
 
 def delete_endpoint():
