@@ -217,10 +217,6 @@ __pycache__/
 .dvc/cache/
 .dvc/tmp/
 .dvc/lock
-data/raw
-data/processed
-models/
-
 # MLflow
 mlruns/
 mlflow.db
