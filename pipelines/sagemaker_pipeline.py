@@ -51,7 +51,7 @@ CONFIG = {
 
     "region": os.environ.get("AWS_REGION", "us-east-1"),
     "bucket": os.environ.get("S3_BUCKET", "fraud-detection-dvc"),
-    "role_arn": os.environ.get("SAGEMAKER_ROLE_ARN", "arn:aws:iam::779466390141:role/FraudDetectionSageMakerRole"),
+    "role_arn": os.environ.get("SAGEMAKER_ROLE_ARN"),  # Must be set via env var
     "pipeline_name": "fraud-detection-pipeline",
     "model_package_group": "fraud-detection-models",
     "endpoint_name": "fraud-detection-endpoint",
